@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from app.routes import docker_routes
 from app.routes.auth_routes import router as auth_routes
 from app.routes.docker_routes import router as docker_routes
 
