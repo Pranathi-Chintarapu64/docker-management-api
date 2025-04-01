@@ -1,14 +1,18 @@
 from fastapi import FastAPI
-from app.routes import docker_routes
-from app.routes.auth_routes import router as auth_routes
-from app.routes.docker_routes import router as docker_routes
+from fastapi.middleware.cors import CORSMiddleware
+from app.routes import auth_routes, docker_routes
 
+app = FastAPI()
 
-app = FastAPI(title="Docker Container Management API")
+# CORS Middleware - Allow all origins (you can adjust this as needed)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # You can replace * with specific URLs like ["http://localhost"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-app.include_router(auth_routes, prefix="/auth")
-app.include_router(docker_routes, prefix="/docker")
-
-@app.get("/")
-def root():
-    return {"message": "Docker Container Management System Running"}
+# Include the routes
+app.include_router(auth_routes.router)
+app.include_router(docker_routes.router)
