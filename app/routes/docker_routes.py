@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException, Form
+from fastapi import APIRouter, HTTPException, Form, Depends
 import docker
 import os
 from typing import Optional
+from app.auth import get_current_user
 
 router = APIRouter()
 
@@ -12,100 +13,63 @@ client = docker.from_env()
 @router.post("/docker/build_image/")
 async def build_image(
     image_name: str = Form(...),  # Image name from the form
-    dockerfile_path: str = Form(...)  # Dockerfile path from the form
+    dockerfile_path: str = Form(...),  # Dockerfile path from the form
+    user: dict = Depends(get_current_user)  # Require authentication
 ):
     try:
-        # Check if the Dockerfile exists
         if not os.path.exists(dockerfile_path):
             raise HTTPException(status_code=400, detail="Dockerfile path does not exist.")
         
-        context_path = os.path.dirname(dockerfile_path)  # Use directory of the Dockerfile as the context
-        
-        # Building the Docker image
-        print(f"Building Docker image: {image_name} from Dockerfile: {dockerfile_path} with context: {context_path}")
-        image,logs=client.images.build(path=os.path.dirname(dockerfile_path),dockerfile=os.path.basename(dockerfile_path),tag=image_name)
+        context_path = os.path.dirname(dockerfile_path)
+        image, logs = client.images.build(path=os.path.abspath(dockerfile_path), tag=image_name)
 
-
-
-        
-        # Returning logs or success response
         return {"message": f"Image {image_name} built successfully.", "logs": [log.get('stream') for log in logs if log.get('stream')]}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error building image: {str(e)}")
 
-
-# Endpoint to run the Docker container
+# Endpoint to run a Docker container
 @router.post("/docker/run_container/")
 async def run_container(
     image_name: str = Form(...),
-    ports: str = Form(""),  # Default to empty string
-    env_vars: str = Form(""),  # Default to empty string
-    detached: bool = Form(True)
+    ports: str = Form(""),
+    env_vars: str = Form(""),
+    detached: bool = Form(True),
+    user: dict = Depends(get_current_user)  # Require authentication
 ):
     try:
-        port_mappings = {}
-        if ports:
-            for p in ports.split(","):
-                if ":" in p:
-                    host_port, container_port = p.split(":")
-                    port_mappings[int(host_port)] = int(container_port)
-
-        env_variables = {}
-        if env_vars:
-            for e in env_vars.split(","):
-                if "=" in e:
-                    key, value = e.split("=")
-                    env_variables[key] = value
-
+        port_mappings = {int(hp): int(cp) for p in ports.split(",") if ":" in p for hp, cp in [p.split(":")]}
+        env_variables = {k: v for e in env_vars.split(",") if "=" in e for k, v in [e.split("=")]} 
         container = client.containers.run(
             image_name,
             detach=detached,
-            ports=port_mappings if port_mappings else None,
-            environment=env_variables if env_variables else None
+            ports=port_mappings or None,
+            environment=env_variables or None
         )
-
         return {"message": "Container started successfully", "container_id": container.id}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error running container: {str(e)}")
 
-
 # Endpoint to check running containers
 @router.get("/docker/containers_status/")
-async def containers_status():
+async def containers_status(user: dict = Depends(get_current_user)):  # Require authentication
     try:
-        containers = client.containers.list(all=True)  # Get all containers (running and stopped)
-        container_data = []
-
-        for container in containers:
-            container_info = {
-                "container_id": container.id,
-                "container_name": container.name,
-                "image_name": container.image.tags if container.image.tags else "No image name"
-            }
-            container_data.append(container_info)
-
-        return {"containers": container_data}
-
+        containers = client.containers.list(all=True)
+        return {"containers": [{"container_id": c.id, "container_name": c.name, "image_name": c.image.tags or "No image"} for c in containers]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching container status: {str(e)}")
 
-
 # Endpoint to fetch logs of a container
 @router.get("/docker/container_logs/{container_id}")
-async def container_logs(container_id: str):
+async def container_logs(container_id: str, user: dict = Depends(get_current_user)):  # Require authentication
     try:
         container = client.containers.get(container_id)
-        logs = container.logs(tail=100).decode('utf-8')
-        return {"logs": logs}
+        return {"logs": container.logs(tail=100).decode('utf-8')}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching container logs: {str(e)}")
 
-
 # Endpoint to stop a running container
 @router.post("/docker/stop_container/{container_id}")
-async def stop_container(container_id: str):
+async def stop_container(container_id: str, user: dict = Depends(get_current_user)):  # Require authentication
     try:
         container = client.containers.get(container_id)
         container.stop()
@@ -113,10 +77,9 @@ async def stop_container(container_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error stopping container: {str(e)}")
 
-
 # Endpoint to remove a container
 @router.post("/docker/remove_container/{container_id}")
-async def remove_container(container_id: str):
+async def remove_container(container_id: str, user: dict = Depends(get_current_user)):  # Require authentication
     try:
         container = client.containers.get(container_id)
         container.remove()
@@ -124,12 +87,25 @@ async def remove_container(container_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error removing container: {str(e)}")
 
-
 # Endpoint to create a Docker volume
 @router.post("/docker/create_volume/")
-async def create_volume(volume_name: str = Form(...)):
+async def create_volume(volume_name: str = Form(...), user: dict = Depends(get_current_user)):  # Require authentication
     try:
         volume = client.volumes.create(name=volume_name)
         return {"message": f"Volume {volume_name} created."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error creating volume: {str(e)}")
+
+
+
+
+
+
+
+
+
+@router.get("/containers_status/")
+def get_containers_status(current_user: dict = Depends(get_current_user)):  # Enforce auth
+    # Now only authenticated users can access this!
+    containers = get_all_containers()  # Fetch container info
+    return {"containers": containers}

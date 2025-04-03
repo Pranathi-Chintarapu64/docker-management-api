@@ -16,3 +16,10 @@ app.add_middleware(
 # Include the routes
 app.include_router(auth_routes.router)
 app.include_router(docker_routes.router)
+
+
+
+
+@app.get("/")
+def read_root():
+    return {"message": "FastAPI Docker Management API is running"}
